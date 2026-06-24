@@ -1,0 +1,641 @@
+---
+title: "BREAST CANCER WISCONSIN"
+author: "Javier Ramírez"
+date: "2026-06-18"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+BREAST CANCER WISCONSIN ANALYSIS
+
+Clasificación de tumores provenientes de muestras de cancer de mama en Benignos o Malignos a partir de la base de datos de UCI Machine Learning Repository sobre datos de Wisconsin. Se compararán distintos modelos de clasificación para ver cual es el que mejor lo hace.
+
+```{r}
+url = "https://archive.ics.uci.edu/ml/machine-learning-databases/breast-cancer-wisconsin/wdbc.data"
+
+nombres = c(
+  "ID", "Diagnosis",
+  "radius_mean", "texture_mean", "perimeter_mean", "area_mean", "smoothness_mean",
+  "compactness_mean", "concavity_mean", "concave_points_mean", "symmetry_mean", "fractal_dimension_mean",
+  "radius_se", "texture_se", "perimeter_se", "area_se", "smoothness_se",
+  "compactness_se", "concavity_se", "concave_points_se", "symmetry_se", "fractal_dimension_se",
+  "radius_worst", "texture_worst", "perimeter_worst", "area_worst", "smoothness_worst",
+  "compactness_worst", "concavity_worst", "concave_points_worst", "symmetry_worst", "fractal_dimension_worst"
+)
+
+dat = read.csv(url, header = FALSE, col.names = nombres)
+head(dat)
+length(dat$ID)
+
+```
+
+
+Características iniciales de los datos:
+
+  - Total de observaciones: 569. 
+  - Total de variables: 1 identificador, 1 de diagnóstico (B o M), 30 de características.
+  - Variable objetivo: Diagnóstico, clasificar tumores según sus características para saber si son benignos o malignos.
+  - Significado de las clases: M es tumor maligno, B es tumor benigno. Se toma M como la clase positiva ya que se busca detectar los tumores malignos.
+  - Origen de los datos: UCI Machine Learning Repository.
+  
+En cuanto a los tumores podemos ver que hay: 
+
+```{r}
+prop.table(table(dat$Diagnosis))
+```
+
+Es decir, un 37.26% de malignos y el resto benignos. No existe desequilibrio entre observaciones.
+
+
+
+
+```{r}
+x = dat[, 3:32]
+head(x)
+#corrplot(cor(x), method = "ellipse")
+```
+
+
+Vemos claras relaciones lineales positivas entre la mayoría de variables siendo las más importantes:
+
+```{r}
+M = cor(x)
+maximos = numeric(nrow(M))
+variable_maxima = character(nrow(M))
+
+for(i in 1:nrow(M)){
+  
+  # Copio la fila i
+  fila = M[i, ]
+  
+  # Elimino la diagonal, es decir, la correlación de la variable consigo misma
+  fila[i] = NA
+  
+  # Guardo el valor máximo de la fila sin contar la diagonal
+  maximos[i] = max(fila, na.rm = TRUE)
+  
+  # Guardo el nombre de la variable con la que tiene mayor correlación
+  variable_maxima[i] = names(which.max(fila))
+}
+
+# Creo una tabla resumen
+resultado = data.frame(
+  Variable = rownames(M),
+  Max_correlacion = maximos,
+  Variable_mas_correlacionada = variable_maxima
+)
+
+resultado
+```
+
+
+Analisis 1. Analisis discriminante
+
+Primero construimos el modelo sin separar datos de entrenamiento y test
+
+```{r}
+library (MASS)
+m1 = lda(dat$Diagnosis ~ ., data = x)
+names(m1)
+m1$prior
+m1$means
+p1 = predict(m1)
+t1 = table(p1$class, dat$Diagnosis)
+addmargins(t1)
+sum(t1[1,1], t1[2,2])/sum(t1[1,1], t1[2,2], t1[1,2], t1[2,1])*100
+```
+
+
+Para un análisis sin separación de entrenamiento y test se obtiene un 96.5% de precisión fallando en la clasificación de 18 benignos como malignos y en 2 malignos como benignos.
+
+Accuracy:
+
+```{r}
+acc1 = sum(t1[1,1], t1[2,2]) / sum(t1[1,2], t1[2,1], t1[1,1], t1[2,2])*100
+acc1
+```
+
+
+Sensibilidad:
+
+```{r}
+sens1 = t1[1,1] / (t1[1,1] + t1[[1,2]])*100
+sens1
+```
+
+Especificidad:
+
+```{r}
+esp1 = t1[2,2] / (t1[2,2] + t1[[2,1]])*100
+esp1
+```
+
+
+
+Hacemos ahora la separación entre entrenamiento y test (80 / 20).
+
+```{r}
+set.seed(123)
+nsample = sample(1:length(dat$ID), 455)
+length(nsample)
+train = dat[nsample, ]
+test = dat[-nsample, ]
+x_train12 = train[ ,3:32]
+x_test12 = test[ ,3:32]
+
+m12 = lda(train$Diagnosis ~ ., data = x_train12)
+p12 = predict(m12, newdata = x_test12)
+length(p12$class)
+t12 = table(test$Diagnosis, p12$class)
+addmargins(t12)
+```
+
+```{r}
+acc12 = sum(t12[1,1] + t12[2,2]) / sum(t12[1,1] + t12[2,2] + t12[1,2] + t12[2,1])*100
+acc12
+```
+
+Con la separación entre entrenamiento y test la precisión en el conjunto de test es del 95.61%, clasificando 1 tumor benigno como maligno y 4 malignos como benignos. Ha empeorado poco en la precisión global aunque se ha equivocado más en la clasificación de tumores malignos lo cual es más preocupante.
+
+Sensibilidad:
+
+```{r}
+sens12 = t12[1,1] / (t12[1,1] + t12[[1,2]])*100
+sens12
+```
+
+Especificidad:
+
+```{r}
+esp12 = t12[2,2] / (t12[2,2] + t12[[2,1]])*100
+esp12
+```
+
+
+Análisis 2. Análisis discriminante con componentes principales para reducir dimensiones.
+
+```{r}
+set.seed(123)
+nsample2 = sample(1:length(dat$ID), 455)
+length(nsample2)
+train2 = dat[nsample2, ]
+test2 = dat[-nsample2, ]
+dim(train2)
+dim(test2)
+x_train2 = train2[ ,3:32]
+x_test2 = test2 [ ,3:32]
+y_train2 = train2$Diagnosis
+y_test2 = test2$Diagnosis
+
+fit2 = princomp(x_train2, cor = T)
+plot(fit2, type = "lines")
+cumsum((fit2$sdev^2)/32*100) 
+
+```
+
+
+Como no hay una diferencia clara hago dos análisis, uno con 3 componentes principales, otro con 5 y otro con 7. Si miramos la tabla de variabilidad explicada acumulada podemos ver también que una buena elección sería 13 componentes. Para el análisis con 3, 5, 7 y 13 componentes principales tenemos que coger reescalar los datos de entrenamiento y test en estos 3 componentes, es decir, pasarlos de 32 dimensiones a 3, 5, 7 y 13. Los valores de cada observación en las nuevas dimensiones están en fit2$scores.
+
+
+```{r}
+r1 = 3
+scores_train2 = as.data.frame(fit2$scores[, 1:r1])
+scores_train2$Diagnosis = y_train2
+head(scores_train2)
+
+```
+```{r}
+x_test_scaled2 = scale(x_test2, center = fit2$center, scale = fit2$scale)
+scores_test2 = as.data.frame(as.matrix(x_test_scaled2) %*% unclass(fit2$loadings)[, 1:r1])
+colnames(scores_test2) = colnames(scores_train2)[1:r1]
+scores_test2$Diagnosis = y_test2
+head(scores_test2)
+```
+
+
+Reducida la dimesión a 3 componentes aplico el análisis discriminante para comprobar la validez del modelo
+
+```{r}
+m122 = lda(train2$Diagnosis ~ ., data = scores_train2)
+p122 = predict(m122, newdata = scores_test2)
+t122 = table(test2$Diagnosis, p122$class)
+addmargins(t122)
+```
+
+
+La precisión es de un 93.86% clasificando 7 tumores M como B pero sin fallar en los B
+
+
+```{r}
+acc122 = sum(t122[1,1] + t122[2,2]) / sum(t122[1,1] + t122[2,2] + t122[1,2] + t122[2,1])*100
+acc122
+```
+
+Sensibilidad:
+
+```{r}
+sens122 = t122[1,1] / (t122[1,1] + t122[[1,2]])*100
+sens122
+```
+
+Especificidad:
+
+```{r}
+esp122 = t122[2,2] / (t122[2,2] + t122[[2,1]])*100
+esp122
+```
+
+
+Si hacemos el análisis para 5 componentes:
+
+```{r}
+r2 = 5
+set.seed(123)
+nsample3 = sample(1:length(dat$ID), 455)
+length(nsample3)
+train3 = dat[nsample3, ]
+test3 = dat[-nsample3, ]
+dim(train3)
+dim(test3)
+x_train3 = train3[ ,3:32]
+x_test3 = test3 [ ,3:32]
+y_train3 = train3$Diagnosis
+y_test3 = test3$Diagnosis
+
+scores_train3 = as.data.frame(fit2$scores[ ,1:r2])
+scores_train3$Diagnosis = y_train3
+x_test_scaled3 = scale(x_test3, center = fit2$center, scale = fit2$scale)
+scores_test3 = as.data.frame(as.matrix(x_test_scaled3) %*% unclass(fit2$loadings)[, 1:r2])
+colnames(scores_test3) = colnames(scores_train3)[1:r2]
+scores_test3$Diagnosis = y_test3
+
+m123 = lda(train3$Diagnosis ~ ., data = scores_train3)
+p123 = predict(m123, newdata = scores_test3)
+t123 = table(scores_test3$Diagnosis, p123$class)
+addmargins(t123)
+```
+
+
+
+```{r}
+acc123 = sum(t123[1,1] + t123[2,2]) / sum(t123[1,1] + t123[2,2] + t123[1,2] + t123[2,1])*100
+acc123
+```
+
+La precisión ha aumentado un poco ya que hay un error menos en la claisifación de un M como B.
+
+Sensibilidad:
+
+```{r}
+sens123 = t123[1,1] / (t123[1,1] + t123[[1,2]])*100
+sens123
+```
+
+Especificidad:
+
+```{r}
+esp123 = t123[2,2] / (t123[2,2] + t123[[2,1]])*100
+esp123
+```
+
+
+Para 7 componentes tenemos:
+
+```{r}
+r3 = 7
+set.seed(123)
+nsample4 = sample(1:length(dat$ID), 455)
+train4 = dat[nsample4, ]
+test4 = dat[-nsample4, ]
+x_train4 = train4[ ,3:32]
+x_test4 = test4[ ,3:32]
+y_train4 = train4$Diagnosis
+y_test4 = test4$Diagnosis
+
+scores_train4 = as.data.frame(fit2$scores[ ,1:r3])
+scores_train4$Diagnosis = y_train4
+x_test_scaled4 = scale(x_test4, center = fit2$center, scale = fit2$scale)
+scores_test4 = as.data.frame(as.matrix(x_test_scaled4) %*% unclass(fit2$loadings)[, 1:r3])
+colnames(scores_test4) = colnames(scores_train4)[1:r3]
+scores_test4$Diagnosis = y_test4
+
+m124 = lda(train4$Diagnosis ~ ., data = scores_train4)
+p124 = predict(m124, newdata = scores_test4)
+t124 = table(scores_test4$Diagnosis, p124$class)
+addmargins(t124)
+```
+
+```{r}
+acc124 = sum(t124[1,1] + t124[2,2]) / sum(t124[1,1] + t124[2,2] + t124[1,2] + t124[2,1])*100
+acc124
+```
+
+Misma precisión que para 5 componentes cometiendo los mismos errores.
+
+Sensibilidad:
+
+```{r}
+sens124 = t124[1,1] / (t124[1,1] + t124[[1,2]])*100
+sens124
+```
+
+Especificidad:
+
+```{r}
+esp124 = t124[2,2] / (t124[2,2] + t124[[2,1]])*100
+esp124
+```
+
+
+Para 13 componentes:
+
+```{r}
+r4 = 14
+set.seed(123)
+nsample5 = sample(1:length(dat$ID), 455)
+train5 = dat[nsample5, ]
+test5 = dat[-nsample5, ]
+x_train5 = train5[ ,3:32]
+x_test5 = test5[ ,3:32]
+y_train5 = train5$Diagnosis
+y_test5 = test5$Diagnosis
+
+scores_train5 = as.data.frame(fit2$scores[ ,1:r4])
+scores_train5$Diagnosis = y_train5
+x_test_scaled5 = scale(x_test5, center = fit2$center, scale = fit2$scale)
+scores_test5 = as.data.frame(as.matrix(x_test_scaled5) %*% unclass(fit2$loadings)[, 1:r4])
+colnames(scores_test5) = colnames(scores_train5)[1:r4]
+scores_test5$Diagnosis = y_test5
+
+m125 = lda(train5$Diagnosis ~ ., data = scores_train5)
+p125 = predict(m125, newdata = scores_test5)
+t125 = table(scores_test5$Diagnosis, p125$class)
+addmargins(t125)
+```
+
+
+Misma precisión que para 7 componentes.
+
+Accuracy
+
+```{r}
+acc125 = acc124
+acc125
+```
+
+
+Sensibilidad:
+
+```{r}
+sens125 = t125[1,1] / (t125[1,1] + t125[[1,2]])*100
+sens125
+```
+
+Especificidad:
+
+```{r}
+esp125 = t125[2,2] / (t125[2,2] + t125[[2,1]])*100
+esp125
+```
+
+
+
+Análisis 3. Árbol de regresión
+
+Uso de un árbol de regresión de clasificación para clasificar los tumores.
+
+```{r}
+library(rpart)
+install.packages("rpart.plot")
+library(rpart.plot)
+set.seed(123)
+nsample7 = sample(1:length(dat$ID), 455)
+train7 = dat[nsample7, ]
+test7 = dat[-nsample7, ]
+x_train7 = train7[ ,3:32]
+x_test7 = test7[ ,3:32]
+
+t3 = rpart(train7$Diagnosis ~ ., data = x_train7)
+printcp(t3)
+plotcp(t3)
+t32 = prune(t3, cp = 0.042)
+printcp(t32)
+```
+
+```{r}
+p7 = predict(t3, newdata = x_test7)
+p72 = predict(t32, newdata = x_test7)
+test7$Diagnosisp = factor(p7[, 1]<.5, labels = c("B","M")) 
+test7$Diagnosisp2 = factor(p72[, 1]<.5, labels = c("B","M")) 
+
+solt7 = table(test7$Diagnosis, test7$Diagnosisp) 
+addmargins(solt7)
+
+```
+
+```{r}
+acc7 = sum(solt7[1,1], solt7[2,2])/sum(solt7[1,1], solt7[2,2], solt7[1,2], solt7[2,1])*100
+acc7
+```
+
+Con el árbol de regresión completo se obtiene una precisión del 92.98% clasificando 4 B como M y 4 M como B.
+
+Sensibilidad:
+
+```{r}
+sens7 = solt7[1,1] / (solt7[1,1] + solt7[[1,2]])*100
+sens7
+```
+
+Especificidad:
+
+```{r}
+esp7 = solt7[2,2] / (solt7[2,2] + solt7[[2,1]])*100
+esp7
+```
+
+```{r}
+solt72 = table(test7$Diagnosis, test7$Diagnosisp2)
+addmargins(solt72)
+```
+
+```{r}
+acc72 = sum(solt72[1,1], solt72[2,2])/sum(solt72[1,1], solt72[2,2], solt72[1,2], solt72[2,1])*100
+acc72
+```
+
+Con el árbol podado según plotcp se obtiene una precisión algo más baja, 92.1%.
+
+
+Sensibilidad:
+
+```{r}
+sens72 = solt72[1,1] / (solt72[1,1] + solt72[[1,2]])*100
+sens72
+```
+
+Especificidad:
+
+```{r}
+esp72 = solt72[2,2] / (solt72[2,2] + solt72[[2,1]])*100
+esp72
+```
+
+En cuanto a la importancia de las variables usadas para el diagnostico tenemos:
+
+```{r}
+t3$variable.importance
+```
+
+Las variables claramente más importantes para la clasificación de los tumores son perimeter_worst, radius_worst, area_worst, perimenter_mean, radius_mean y area_mean muy por encima del resto de variables.
+
+Análisis 4. Random Forest
+
+```{r}
+install.packages("randomForest")
+library(randomForest)
+set.seed(123)
+nsample8 = sample(1:length(dat$ID), 455)
+train8 = dat[nsample8, ]
+test8 = dat[-nsample8, ]
+write.csv(
+  data.frame(ID = test8$ID),
+  "test_ids_breast_cancer.csv",
+  row.names = FALSE
+)
+train8$Diagnosis = factor(ifelse(train8$Diagnosis == "M", 1, 0))
+test8$Diagnosis = factor(ifelse(test8$Diagnosis == "M", 1, 0), levels = levels(train8$Diagnosis))
+x_train8 = train8[ ,3:32]
+x_test8 = test8[ ,3:32]
+r8 = randomForest(train8$Diagnosis ~., data = x_train8)
+p8 = predict(r8, newdata = x_test8)
+t8 = table(test8$Diagnosis, p8)
+dimnames(t8)[[1]] = c("B", "M")
+dimnames(t8)[[2]] = c("B", "M")
+addmargins(t8)
+```
+
+```{r}
+acc8 = sum(t8[1,1], t8[2,2])/sum(t8[1,2], t8[2,1], t8[1,1], t8[2,2])*100
+acc8
+```
+
+Obtenemos una precisión del 94.73%.
+
+Sensibilidad:
+
+```{r}
+sens8 = t8[1,1] / (t8[1,1] + t8[[1,2]])*100
+sens8
+```
+
+Especificidad:
+
+```{r}
+esp8 = t8[2,2] / (t8[2,2] + t8[[2,1]])*100
+esp8
+```
+
+
+En cuanto a la relevancia de las variables a la hora de hacer la clasificación de los tumores, el modelo de Random Forest usa:
+
+```{r}
+varImpPlot(r8)
+```
+
+Siendo las variables más importantes: perimeter_worst, concave_points_worst, radius_worst, concave_points_mean y area_worst.
+
+Conclusión del análsis y selección del modelo.
+
+Para una primera comparacion comparamos las precisiones de cada modelo
+
+
+```{r}
+modelos = c(
+  "LDA",
+  "PCA + LDA 3 CP",
+  "PCA + LDA 5 CP",
+  "PCA + LDA 7 CP",
+  "PCA + LDA 14 CP",
+  "Árbol completo",
+  "Random Forest"
+)
+
+accuracys = c(acc12, acc122, acc123, acc124, acc125, acc7, acc8)
+
+sensibilidades = c(sens12, sens122, sens123, sens124, sens125, sens7, sens8)
+
+especificidades = c(esp12, esp122, esp123, esp124, esp125, esp7, esp8)
+
+
+tabla_modelos = data.frame(
+  Modelo = modelos,
+  Accuracy = accuracys,
+  Sensibilidad = sensibilidades,
+  Especificidad = especificidades
+)
+
+tabla_modelos
+```
+
+
+Para calcular cual es el mejor modelo planteamos una funcion de coste para penalizar en mayor medida la clasificacion de tumores malignos como benignos que el caso contrario. La funcion de coste será FC = 10 * B/M + 500 * M/B.
+
+```{r}
+coste_FP = 10
+coste_FN = 500
+
+FP12 = t12[1, 2]
+FN12 = t12[2, 1]
+coste12 = coste_FP * FP12 + coste_FN * FN12
+
+FP122 = t122[1, 2]
+FN122 = t122[2, 1]
+coste122 = coste_FP * FP122 + coste_FN * FN122
+
+FP123 = t123[1, 2]
+FN123 = t123[2, 1]
+coste123 = coste_FP * FP123 + coste_FN * FN123
+
+FP124 = t124[1, 2]
+FN124 = t124[2, 1]
+coste124 = coste_FP * FP124 + coste_FN * FN124
+
+FP125 = t125[1, 2]
+FN125 = t125[2, 1]
+coste125 = coste_FP * FP125 + coste_FN * FN125
+
+FP7 = solt7[1, 2]
+FN7 = solt7[2, 1]
+coste7 = coste_FP * FP7 + coste_FN * FN7
+
+FP8 = t8[1, 2]
+FN8 = t8[2, 1]
+coste8 = coste_FP * FP8 + coste_FN * FN8
+
+
+costes = c(
+  coste12,
+  coste122,
+  coste123,
+  coste124,
+  coste125,
+  coste7,
+  coste8
+)
+
+tabla_costes = data.frame(
+  Modelo = modelos,
+  Funcion_coste = costes
+)
+
+tabla_costes
+```
+
+
+El mejor modelo es el de predicción con Random Forest ya que es el de mayor especificidad y por tanto el que tiene una menor funcion de coste asociada a los errores que comete ya que únicamente comete 3 errores de FN.
